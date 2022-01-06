@@ -1,6 +1,6 @@
-# How to use the new [Security Policy Operator](https://github.com/kubernetes-sigs/security-profiles-operator)
+# How to use the new [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator)
 
-This is a demo on how to use the [Security Policy Operator](https://github.com/kubernetes-sigs/security-profiles-operator) to
+This is a demo on how to use the [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator) to
 
   1. [Bootstrap](#bootstrap)
   1. [Record Syscalls](#record-syscalls)
@@ -37,7 +37,7 @@ kubectl apply -f https://github.com/jetstack/cert-manager/releases/download/v1.6
 kubectl --namespace cert-manager wait --for condition=ready pod -l app.kubernetes.io/instance=cert-manager
 ```
 
-### Deploy [Security Policy Operator](https://github.com/kubernetes-sigs/security-profiles-operator) (and wait for it to be ready)
+### Deploy [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator) (and wait for it to be ready)
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/security-profiles-operator/main/deploy/operator.yaml
