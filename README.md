@@ -209,13 +209,144 @@ Cool, so we're pretty trapped, but this is quite a contrived example, lets try w
 
 ## Put that all together to something less contrived
 
-We'll deploy a wordpress helm chart. run some requests through it to create a profiles and then we'll apply the profiles and then prove it is enforcing.
+We'll deploy [Wordpress](https://www.wordpress.org) which needs [MySQL](https://mysql.org)/[MariaDB](https://mariadb.org/) and we'll also throw in [phpMyAdmin](https://www.phpmyadmin.net/) for 'fun'.
 
+First lets deploy our recorder.
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/appvia/security-profiles-operator-demo/main/wordpress-recorder.yaml
+```
+
+Now lets deploy our apps
+
+```bash
+kubectl apply -k github.com/appvia/wordpress-kustomization-demo
+kubectl wait --for condition=ready pod mysql-0
+```
+
+Now lets go to the wordpress gui and check
+
+```bash
+kubectl port-forward svc/wordpress 8080:http
+```
+
+Open a browser to http://localhost:8080
+
+It doesn't really matter what config you give it, you're not going to keep this installation, you can imagine if this were your app, you might run your end to end tests right now.
+
+![wordpress install screen with weak credentials](img/wordpressinstall.png)
+
+Do some other things now, like create a blog post, upload images etc
+
+![wordpress helloworld post](img/wordpress-hello.png)
+
+Now lets try phpmyadmin
+
+```bash
+kubectl port-forward svc/phpmyadmin 8081:http
+```
+
+And go to it in the browser http://localhost:8081/?db=mydb&table=wp_posts which proves its all talking to one another, you can click around and do some other things like upload/download a file etc if you like.
+
+Now lets delete our pods collect our profiles and stop recording
+
+```bash
+kubectl delete -k github.com/appvia/wordpress-kustomization-demo
+kubectl delete -f https://raw.githubusercontent.com/appvia/security-profiles-operator-demo/main/wordpress-recorder.yaml
+
+kubectl neat get sp wordpress-mysql -o yaml > mysql-seccomp-profile.yaml
+kubectl neat get sp wordpress-phpmyadmin-0 -o yaml > phpmyadmin-seccomp-profile.yaml
+kubectl neat get sp wordpress-wordpress-0 -o yaml > wordpress-seccomp-profile.yaml
+```
+
+Now we've got our profiles, we can either update our deployment code and include the seccomp profile with our infra code, or if perhaps this isn't in your control, perhaps its a public helm chart you've got no influence over you can use a Security Profiles Operator provided binding instead
+
+```bash
+kubectl apply -f - << EOF
+apiVersion: security-profiles-operator.x-k8s.io/v1alpha1
+kind: ProfileBinding
+metadata:
+  name: wordpress-wordpress
+spec:
+  profileRef:
+    kind: SeccompProfile
+    name: wordpress-wordpress-0
+  image: wordpress:5.8.2-php7.4-apache
+---
+apiVersion: security-profiles-operator.x-k8s.io/v1alpha1
+kind: ProfileBinding
+metadata:
+  name: wordpress-phpmyadmin
+spec:
+  profileRef:
+    kind: SeccompProfile
+    name: wordpress-phpmyadmin-0
+  image: phpmyadmin:5.1.1-apache
+---
+apiVersion: security-profiles-operator.x-k8s.io/v1alpha1
+kind: ProfileBinding
+metadata:
+  name: wordpress-mysql
+spec:
+  profileRef:
+    kind: SeccompProfile
+    name: wordpress-mysql
+  image: mariadb:10.6.5-focal
+EOF
+```
+
+If we look at the pods you'll find that the Security Profiles Operator has mutated the pod specs and injected something like:
+
+```yaml
+    securityContext:
+      seccompProfile:
+        localhostProfile: operator/default/wordpress-mysql.json
+        type: Localhost
+```
+
+Now lets check it's all enforcing as we expect:
+
+```shell
+$ kubectl exec -ti deploy/phpmyadmin -- sh
+# touch f
+touch: setting times of 'f': Operation not permitted
+# su
+su: write error: Operation not permitted
+```
+
+Ok, so community products often require quite liberal access to kernel syscalls , but we can at least now monitor what they can do and be aware when the required permissions change
+
+<!--
+
+I tried to make this work with the prometheus stack operator, the issue is that it restarts the api server and messes with the profile recording when you install+uninstall it.
+Leaving it commented out in case I can figure it out and bring it back to life which might be more interesting than the wordpress install.
+
+We'll deploy a helm chart. run some requests through it to create a profiles and then we'll apply the profiles and then prove it is enforcing.
 
 > if you want to reset your kubernetes cluster, or start from this point, then just play the bootrapping section up to and including [Enable the log enricher](#enable-the-log-enricher-and-wait-for-it-to-be-ready)
- 
+
+The recorder config we're going to use will capture everything in the namespace since there isn't any common labels in what we're going to deploy to make it easy.
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/appvia/security-profiles-operator-demo/main/prom-stack-recorder.yaml
 ```
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm install --wait my-wordpress bitnami/wordpress
-TBC
+
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install prom prometheus-community/kube-prometheus-stack
 ```
+
+Since we don't have an ingress setup, we'll have to portforward and browse to see it all working
+
+```bash
+kubectl port-forward svc/prom-grafana 8080:80 
+```
+
+Then open a browser to [localhost:8080](http://localhost:8080) username:`admin` password:`prom-operator` and click around look at some [dashboards](http://localhost:8080/dashboards) this should generate some traffic and syscalls for our recorder.
+
+I'd leave it running for maybe 5 minutes and then you can uninstall the chart and we can checkout our recordings!
+
+```bash
+helm uninstall prom
+```
+-->
