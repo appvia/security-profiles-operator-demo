@@ -19,15 +19,44 @@ It might be possible with podman machine, or some other magic to use the ebpf or
 
 ## Bootstrap
 
-### Start Docker Desktop, and enable Kubernetes
+> This assumes you're using docker (inc Docker Desktop), Podman and podman machine requires a few tweaks, I've added these as comments and suffixed the line with `PODMAN ONLY` and `PODMAN MACHINE ONLY` where necessary you'll need to just uncomment these lines
 
-![Docker desktop enable Kubernetes](img/docker-desktop.png)
+### Start a KiND cluster
 
-### Deploy an auditd controller (and wait for it to be ready)
+You need to mount force the `/proc` to be mounted through to the nodes, if you have multiple nodes you'll need to add the `extraMounts` section to each node
 
 ```bash
-kubectl apply -k github.com/appvia/auditd-container
-kubectl --namespace auditd wait --for condition=ready pod -l name=auditd
+# export KIND_EXPERIMENTAL_PROVIDER=podman                           # PODMAN ONLY
+# podman machine init --cpus=4 --memory=8096                         # PODMAN MACHINE ONLY
+# podman machine start                                               # PODMAN MACHINE ONLY
+# podman system connection default podman-machine-default-root       # PODMAN MACHINE ONLY
+
+kind create cluster --config - << EOF
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: kind
+networking:
+#  apiServerAddress: "0.0.0.0"                                       # PODMAN ONLY
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.23.0
+    extraMounts:
+    - hostPath: /proc
+      containerPath: /hostproc
+EOF
+
+# sed -i '' 's/https:\/\/:/https:\/\/localhost:/g' ~/.kube/config    # PODMAN ONLY
+```
+
+### Deploy a syslog controller (and wait for it to be ready)
+
+> Podman and Docker desktop use a vm that doesn't ship with syslog or auditd which you'll need to write write the logs for the log enricher to then collect, this needs to be deployed as a DaemonSet across the cluster. You may be able to skip this step if you're using a linux workstation or podman which can use eBPF. 
+
+```bash
+kubectl apply -k github.com/chrisns/syslog-auditd # PODMAN ONLY
+
+kubectl --namespace kube-system wait --for condition=ready pods -l name=syslogd # PODMAN ONLY
+
 ```
 
 ### Deploy cert manager (and wait for it to be ready)
@@ -41,13 +70,15 @@ kubectl --namespace cert-manager wait --for condition=ready pod -l app.kubernete
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/security-profiles-operator/main/deploy/operator.yaml
-kubectl --namespace security-profiles-operator wait --for condition=ready pod -l name=spod
+kubectl --namespace security-profiles-operator wait --for condition=ready ds name=spod
 ```
 
-### Enable the log enricher (and wait for it to be ready)
+### Use our custom proc mount and enable the log enricher in the SecurityProfilesOperatorDaemon (SPOD) and wait for it to be ready
 
 ```bash
-kubectl --namespace security-profiles-operator patch spod spod --type=merge -p '{"spec":{"enableLogEnricher":true}}'
+kubectl --namespace security-profiles-operator patch spod spod --type=merge -p '{"spec":{"hostProcVolumePath":"/hostproc"}}'
+kubectl --namespace security-profiles-operator patch spod spod --type=merge -p '{"spec":{"enableLogEnricher":true}}' # DOCKER DESKTOP ONLY
+# kubectl --namespace security-profiles-operator patch spod spod --type=merge -p '{"spec":{"enableBpfRecorder":true}}' # PODMAN / LINUX HOST ONLY
 kubectl --namespace security-profiles-operator wait --for condition=ready pod -l name=spod
 ```
 
@@ -55,6 +86,12 @@ kubectl --namespace security-profiles-operator wait --for condition=ready pod -l
 
 ```shell
 $ kubectl apply -f https://raw.githubusercontent.com/appvia/security-profiles-operator-demo/main/demo-recorder.yaml
+
+$ kubectl run my-pod --image=nginx --labels app=demo && kubectl wait --for condition=ready --timeout=-1s pod my-pod && kubectl delete pod my-pod
+pod/my-pod created
+pod/my-pod condition met
+pod "my-pod" deleted
+
 $ kubectl run --rm -it my-pod --image=alpine --labels app=demo -- sh
 If you don't see a command prompt, try pressing enter.
 / # ls
@@ -314,39 +351,17 @@ touch: setting times of 'f': Operation not permitted
 su: write error: Operation not permitted
 ```
 
-Ok, so community products often require quite liberal access to kernel syscalls , but we can at least now monitor what they can do and be aware when the required permissions change
+Ok, so community products often require quite liberal access to kernel syscalls, but we can at least now monitor what they can do and be aware when the required permissions change.
+
+It's worth noting that some recent [CVEs may been mitigated with even the default seccomp profile](https://blog.aquasec.com/cve-2022-0185-linux-kernel-container-escape-in-kubernetes)
+
 
 <!--
+## TODO
 
-I tried to make this work with the prometheus stack operator, the issue is that it restarts the api server and messes with the profile recording when you install+uninstall it.
-Leaving it commented out in case I can figure it out and bring it back to life which might be more interesting than the wordpress install.
+- [ ] github.com/chrisns/syslog-auditd readme
+- [ ] github.com/appvia/auditd-container readme
+- [ ] e2e tests on spo that demo the wordpress app
+- [ ] add renovate to all repos to update readmes and yaml
 
-We'll deploy a helm chart. run some requests through it to create a profiles and then we'll apply the profiles and then prove it is enforcing.
-
-> if you want to reset your kubernetes cluster, or start from this point, then just play the bootrapping section up to and including [Enable the log enricher](#enable-the-log-enricher-and-wait-for-it-to-be-ready)
-
-The recorder config we're going to use will capture everything in the namespace since there isn't any common labels in what we're going to deploy to make it easy.
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/appvia/security-profiles-operator-demo/main/prom-stack-recorder.yaml
-```
-
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm install prom prometheus-community/kube-prometheus-stack
-```
-
-Since we don't have an ingress setup, we'll have to portforward and browse to see it all working
-
-```bash
-kubectl port-forward svc/prom-grafana 8080:80 
-```
-
-Then open a browser to [localhost:8080](http://localhost:8080) username:`admin` password:`prom-operator` and click around look at some [dashboards](http://localhost:8080/dashboards) this should generate some traffic and syscalls for our recorder.
-
-I'd leave it running for maybe 5 minutes and then you can uninstall the chart and we can checkout our recordings!
-
-```bash
-helm uninstall prom
-```
 -->
