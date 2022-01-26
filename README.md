@@ -39,7 +39,7 @@ networking:
 #  apiServerAddress: "0.0.0.0"                                       # PODMAN ONLY
 nodes:
   - role: control-plane
-    image: kindest/node:v1.23.0
+    image: kindest/node:v1.23.3
     extraMounts:
     - hostPath: /proc
       containerPath: /hostproc
