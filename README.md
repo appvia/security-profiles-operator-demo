@@ -1,3 +1,5 @@
+# ⚠️⚠️⚠ this repo is archived, [content is now on our blog](https://www.appvia.io/blog/how-to-use-the-security-profiles-operator) ⚠️⚠️⚠
+
 # How to use the new [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator)
 
 This is a demo on how to use the [Security Profiles Operator](https://github.com/kubernetes-sigs/security-profiles-operator) to
